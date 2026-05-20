@@ -28,14 +28,14 @@ GO
 -- 3. Phân tích phân khúc khách hàng (Customer Segment Analysis)
 -- Dựa trên bảng rfm đã tính toán
 SELECT 
-    rfm_segment,
-    COUNT(customer_hash) AS Total_Customers,
-    AVG(recency) AS Avg_Recency,
-    AVG(frequency) AS Avg_Frequency,
-    SUM(monetary) AS Total_Revenue_Segment
+    c.rfm_segment,
+    COUNT(c.customer_hash) AS Total_Customers,
+    AVG(r.recency) AS Avg_Recency,
+    AVG(r.frequency) AS Avg_Frequency,
+    SUM(r.monetary) AS Total_Revenue_Segment
 FROM [dbo].[customers] c
 JOIN [dbo].[customer_rfm] r ON c.customer_hash = r.customer_hash
-GROUP BY rfm_segment
+GROUP BY c.rfm_segment
 ORDER BY Total_Revenue_Segment DESC;
 GO
 
