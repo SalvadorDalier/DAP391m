@@ -2,13 +2,13 @@ import pandas as pd
 import sqlalchemy
 import urllib
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # --- CONFIGURATION ---
 SERVER_NAME = 'localhost' 
 DATABASE_NAME = 'Project11DB'
-EXCEL_FILE_PATH = os.path.join('03_Data', 'excel', 'online_retail_09_10 raw.xlsx')
-RFM_FILE_PATH = os.path.join('03_Data', 'excel', 'Master_CustomerRFM.xlsx')
+RAW_DATA_PATH = os.path.join('03_Data', 'excel', 'online_retail_09_10 raw.xlsx')
+RFM_DATA_PATH = os.path.join('03_Data', 'excel', 'Master_CustomerRFM.xlsx')
 
 def get_connection():
     params = urllib.parse.quote_plus(
@@ -20,88 +20,116 @@ def get_connection():
     engine = sqlalchemy.create_engine(f"mssql+pyodbc:///?odbc_connect={params}")
     return engine
 
-def import_all_data():
+def clean_and_import():
     try:
         engine = get_connection()
+        print(f"--- STARTING REAL DATA IMPORT ---")
+
+        # 1. LOAD DATA
+        print(f"Loading raw data from {RAW_DATA_PATH}...")
+        df = pd.read_excel(RAW_DATA_PATH)
         
-        # 1. Import Fact Sales
-        print(f"Reading {EXCEL_FILE_PATH}...")
-        df = pd.read_excel(EXCEL_FILE_PATH)
-        sales_df = pd.DataFrame()
-        sales_df['invoice_no'] = df['Invoice'].astype(str)
-        sales_df['customer_hash'] = df['Customer ID'].fillna(0).astype(int).astype(str)
-        sales_df['quantity'] = df['Quantity']
-        sales_df['unit_price'] = df['Price']
-        sales_df['invoice_date'] = pd.to_datetime(df['InvoiceDate'])
-        sales_df = sales_df[sales_df['customer_hash'] != '0']
+        # 2. DATA CLEANING (Handling Bias: Duplicates, Missing, Outliers)
+        initial_count = len(df)
         
-        # 2. Import Customers & RFM from Master_CustomerRFM.xlsx
-        print(f"Reading {RFM_FILE_PATH}...")
-        rfm_df = pd.read_excel(RFM_FILE_PATH)
-        rfm_df['customer_hash'] = rfm_df['CustomerID'].astype(str)
+        # Remove Duplicates
+        df = df.drop_duplicates()
+        print(f"Removed {initial_count - len(df)} duplicate rows.")
         
-        # Logic phân khúc RFM đơn giản (nếu chưa có trong file)
-        # Giả sử: Monetary > 2000 là 'VIP', > 1000 là 'Loyal', còn lại là 'Regular'
-        def segment(row):
-            if row['Monetary'] > 2000: return 'VIP'
-            if row['Monetary'] > 500: return 'Loyal'
-            return 'Regular'
+        # Handle Missing CustomerID (Crucial for Foreign Keys)
+        missing_customers = df['Customer ID'].isnull().sum()
+        df = df.dropna(subset=['Customer ID'])
+        print(f"Removed {missing_customers} rows with missing Customer ID.")
         
-        rfm_df['rfm_segment'] = rfm_df.apply(segment, axis=1)
+        # Convert Customer ID to string for consistency
+        df['customer_hash'] = df['Customer ID'].astype(int).astype(str)
         
-        # Đẩy dữ liệu vào bảng Customers
-        print("Updating Customers table...")
-        customers_to_db = rfm_df[['customer_hash', 'rfm_segment']].copy()
-        customers_to_db['is_active'] = 1
-        # Xóa dữ liệu cũ để tránh lỗi PK hoặc trùng lặp
+        # Handling Outliers (Quantile Clipping)
+        q_limit = df['Quantity'].quantile(0.99)
+        p_limit = df['Price'].quantile(0.99)
+        df['Quantity'] = df['Quantity'].clip(lower=0, upper=q_limit)
+        df['Price'] = df['Price'].clip(lower=0, upper=p_limit)
+        print(f"Clipped outliers (Quantity > {q_limit}, Price > {p_limit}).")
+
+        # 3. EXTRACT COUPON DATA (StockCode 'D' = Discount)
+        print("Extracting actual coupon redemptions...")
+        redemptions_raw = df[df['StockCode'] == 'D'].copy()
+        
+        # Create a real Campaign to link redemptions
+        campaigns = pd.DataFrame([{
+            'campaign_name': 'Historical Store Discount',
+            'coupon_type': 'Extraction',
+            'discount_value': 0.00, # Variable in data
+            'start_date': df['InvoiceDate'].min(),
+            'end_date': df['InvoiceDate'].max(),
+            'budget_gbp': redemptions_raw['Price'].sum() * -1, # Total discount value
+            'target_segment': 'All'
+        }])
+        
+        # 4. PREPARE FACT SALES (Exclude non-product codes)
+        non_product_codes = ['POST', 'D', 'DOT', 'M', 'BANK CHARGES', 'C2', 'GIFT']
+        sales_df = df[~df['StockCode'].isin(non_product_codes)].copy()
+        sales_df = sales_df[sales_df['Quantity'] > 0] # Real sales only
+
+        # 5. PREPARE CUSTOMERS & RFM
+        print(f"Loading RFM segments from {RFM_DATA_PATH}...")
+        rfm_df = pd.read_excel(RFM_DATA_PATH)
+        rfm_df['customer_hash'] = rfm_df['CustomerID'].astype(int).astype(str)
+        
+        # Simple Logic for Segmentation if missing
+        def get_segment(m):
+            if m > 2000: return 'Champions'
+            if m > 500: return 'Loyal'
+            return 'New Customers'
+        rfm_df['rfm_segment'] = rfm_df['Monetary'].apply(get_segment)
+
+        # 6. PUSH TO DATABASE (TRANSACTIONAL)
         with engine.connect() as conn:
+            print("Cleaning old data...")
             conn.execute(sqlalchemy.text("DELETE FROM fact_sales"))
-            conn.execute(sqlalchemy.text("DELETE FROM customer_rfm"))
             conn.execute(sqlalchemy.text("DELETE FROM coupon_redemptions"))
+            conn.execute(sqlalchemy.text("DELETE FROM coupon_campaigns"))
+            conn.execute(sqlalchemy.text("DELETE FROM customer_rfm"))
             conn.execute(sqlalchemy.text("DELETE FROM customers"))
             conn.commit()
-            
+
+        print("Importing Customers...")
+        customers_to_db = rfm_df[['customer_hash', 'rfm_segment']].copy()
+        customers_to_db['is_active'] = 1
         customers_to_db.to_sql('customers', engine, if_exists='append', index=False)
-        
-        # Đẩy dữ liệu vào bảng Fact Sales
-        print("Updating fact_sales table...")
-        sales_df.to_sql('fact_sales', engine, if_exists='append', index=False)
-        
-        # Đẩy dữ liệu vào bảng customer_rfm
-        print("Updating customer_rfm table...")
+
+        print("Importing RFM Data...")
         rfm_to_db = rfm_df[['customer_hash', 'Recency', 'Frequency', 'Monetary']].copy()
         rfm_to_db.columns = ['customer_hash', 'recency', 'frequency', 'monetary']
         rfm_to_db['snapshot_date'] = datetime.now()
         rfm_to_db.to_sql('customer_rfm', engine, if_exists='append', index=False)
-        
-        # 3. Tạo dữ liệu mẫu cho Coupon Campaign
-        print("Creating sample Coupon Campaigns...")
-        campaigns = pd.DataFrame([
-            {
-                'campaign_name': 'Summer Sale 2026',
-                'coupon_type': 'Discount',
-                'discount_value': 10.00,
-                'start_date': datetime.now() - timedelta(days=30),
-                'end_date': datetime.now() + timedelta(days=30),
-                'budget_gbp': 5000.00,
-                'target_segment': 'VIP'
-            },
-            {
-                'campaign_name': 'Welcome Back',
-                'coupon_type': 'Fixed',
-                'discount_value': 5.00,
-                'start_date': datetime.now() - timedelta(days=10),
-                'end_date': datetime.now() + timedelta(days=20),
-                'budget_gbp': 2000.00,
-                'target_segment': 'Regular'
-            }
-        ])
+
+        print("Importing Campaigns...")
         campaigns.to_sql('coupon_campaigns', engine, if_exists='append', index=False)
         
-        print("--- IMPORT COMPLETED SUCCESSFULLY ---")
+        # Get the ID of the campaign we just created
+        campaign_id = pd.read_sql("SELECT campaign_id FROM coupon_campaigns", engine)['campaign_id'][0]
+
+        print("Importing Redemptions...")
+        redemptions_to_db = pd.DataFrame()
+        redemptions_to_db['campaign_id'] = [campaign_id] * len(redemptions_raw)
+        redemptions_to_db['customer_hash'] = redemptions_raw['customer_hash']
+        redemptions_to_db['redemption_date'] = pd.to_datetime(redemptions_raw['InvoiceDate'])
+        redemptions_to_db.to_sql('coupon_redemptions', engine, if_exists='append', index=False)
+
+        print("Importing Fact Sales...")
+        final_sales = pd.DataFrame()
+        final_sales['invoice_no'] = sales_df['Invoice'].astype(str)
+        final_sales['customer_hash'] = sales_df['customer_hash']
+        final_sales['quantity'] = sales_df['Quantity']
+        final_sales['unit_price'] = sales_df['Price']
+        final_sales['invoice_date'] = pd.to_datetime(sales_df['InvoiceDate'])
+        final_sales.to_sql('fact_sales', engine, if_exists='append', index=False)
+
+        print(f"--- SUCCESS: Imported {len(final_sales)} sales and {len(redemptions_to_db)} redemptions. ---")
 
     except Exception as e:
         print(f"--- ERROR: {e} ---")
 
 if __name__ == "__main__":
-    import_all_data()
+    clean_and_import()
