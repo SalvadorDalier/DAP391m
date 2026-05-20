@@ -1,21 +1,23 @@
 import pandas as pd
 import sqlalchemy
-import urllib
+from urllib.parse import quote_plus
 import os
 from datetime import datetime
 
 # --- CONFIGURATION ---
-SERVER_NAME = 'localhost' 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+RAW_DATA_PATH = os.path.join(BASE_DIR, '..', '03_Data', 'excel', 'online_retail_09_10 raw.xlsx')
+RFM_DATA_PATH = os.path.join(BASE_DIR, '..', '03_Data', 'excel', 'Master_CustomerRFM.xlsx')
+SERVER_NAME = 'DESKTOP-NAN6FPF'
 DATABASE_NAME = 'Project11DB'
-RAW_DATA_PATH = os.path.join('03_Data', 'excel', 'online_retail_09_10 raw.xlsx')
-RFM_DATA_PATH = os.path.join('03_Data', 'excel', 'Master_CustomerRFM.xlsx')
 
 def get_connection():
-    params = urllib.parse.quote_plus(
-        f'DRIVER={{SQL Server}};'
+    params = quote_plus(
+        f'DRIVER={{ODBC Driver 18 for SQL Server}};'
         f'SERVER={SERVER_NAME};'
         f'DATABASE={DATABASE_NAME};'
         f'Trusted_Connection=yes;'
+        f'Encrypt=no;'
     )
     engine = sqlalchemy.create_engine(f"mssql+pyodbc:///?odbc_connect={params}")
     return engine
@@ -37,18 +39,18 @@ def clean_and_import():
         print(f"Removed {initial_count - len(df)} duplicate rows.")
         
         # Handle Missing CustomerID (Crucial for Foreign Keys)
-        missing_customers = df['Customer ID'].isnull().sum()
-        df = df.dropna(subset=['Customer ID'])
+        missing_customers = df['CustomerID'].isnull().sum()
+        df = df.dropna(subset=['CustomerID'])
         print(f"Removed {missing_customers} rows with missing Customer ID.")
         
         # Convert Customer ID to string for consistency
-        df['customer_hash'] = df['Customer ID'].astype(int).astype(str)
+        df['customer_hash'] = df['CustomerID'].astype(int).astype(str)
         
         # Handling Outliers (Quantile Clipping)
         q_limit = df['Quantity'].quantile(0.99)
-        p_limit = df['Price'].quantile(0.99)
+        p_limit = df['UnitPrice'].quantile(0.99)
         df['Quantity'] = df['Quantity'].clip(lower=0, upper=q_limit)
-        df['Price'] = df['Price'].clip(lower=0, upper=p_limit)
+        df['UnitPrice'] = df['UnitPrice'].clip(lower=0, upper=p_limit)
         print(f"Clipped outliers (Quantity > {q_limit}, Price > {p_limit}).")
 
         # 3. EXTRACT COUPON DATA (StockCode 'D' = Discount)
@@ -62,7 +64,7 @@ def clean_and_import():
             'discount_value': 0.00, # Variable in data
             'start_date': df['InvoiceDate'].min(),
             'end_date': df['InvoiceDate'].max(),
-            'budget_gbp': redemptions_raw['Price'].sum() * -1, # Total discount value
+            'budget_gbp': redemptions_raw['UnitPrice'].sum() * -1, # Total discount value
             'target_segment': 'All'
         }])
         
@@ -115,14 +117,27 @@ def clean_and_import():
         redemptions_to_db['campaign_id'] = [campaign_id] * len(redemptions_raw)
         redemptions_to_db['customer_hash'] = redemptions_raw['customer_hash']
         redemptions_to_db['redemption_date'] = pd.to_datetime(redemptions_raw['InvoiceDate'])
+        before = len(redemptions_to_db)
+        redemptions_to_db = redemptions_to_db.dropna(subset=['customer_hash', 'redemption_date'])
+        if before > len(redemptions_to_db):
+            print(f"Skipped {before - len(redemptions_to_db)} redemption rows with missing data.")
+        valid_hashes = customers_to_db['customer_hash'].unique()
+        before_red = len(redemptions_to_db)
+        redemptions_to_db = redemptions_to_db[redemptions_to_db['customer_hash'].isin(valid_hashes)]
+        if before_red > len(redemptions_to_db):
+            print(f"Skipped {before_red - len(redemptions_to_db)} redemption rows with unknown customer_hash.")
         redemptions_to_db.to_sql('coupon_redemptions', engine, if_exists='append', index=False)
 
         print("Importing Fact Sales...")
+        before_sales = len(sales_df)
+        sales_df = sales_df[sales_df['customer_hash'].isin(valid_hashes)]
+        if before_sales > len(sales_df):
+            print(f"Skipped {before_sales - len(sales_df)} sales rows with unknown customer_hash.")
         final_sales = pd.DataFrame()
-        final_sales['invoice_no'] = sales_df['Invoice'].astype(str)
+        final_sales['invoice_no'] = sales_df['InvoiceNo'].astype(str)
         final_sales['customer_hash'] = sales_df['customer_hash']
         final_sales['quantity'] = sales_df['Quantity']
-        final_sales['unit_price'] = sales_df['Price']
+        final_sales['unit_price'] = sales_df['UnitPrice']
         final_sales['invoice_date'] = pd.to_datetime(sales_df['InvoiceDate'])
         final_sales.to_sql('fact_sales', engine, if_exists='append', index=False)
 
