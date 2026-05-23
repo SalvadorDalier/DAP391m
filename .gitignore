@@ -1,0 +1,5 @@
+# Ignore large data files to prevent GitHub push errors and repo bloat
+*.csv
+*.xlsx
+
+# (Optional) If you want to force track specific small CSVs, you can use !filename.csv
