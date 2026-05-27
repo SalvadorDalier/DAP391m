@@ -3,8 +3,8 @@ import numpy as np
 import os
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-clean_path = os.path.join(script_dir, '../../data/processed/02_Cleaned_Data_Filtered.csv')
-rfm_path = os.path.join(script_dir, '../../data/processed/customer_rfm.csv')
+clean_path = os.path.join(script_dir, '../../01_data/processed/02_Cleaned_Data_Filtered.csv')
+rfm_path = os.path.join(script_dir, '../../01_data/processed/customer_rfm.csv')
 
 print("Loading cleaned data...")
 df = pd.read_csv(clean_path)

@@ -1,5 +1,14 @@
 # Ignore large data files to prevent GitHub push errors and repo bloat
 *.csv
 *.xlsx
+*.pkl
+*.sqlite
 
-# (Optional) If you want to force track specific small CSVs, you can use !filename.csv
+# Ignore Python caches
+__pycache__/
+*.pyc
+
+# Ignore Agent folders
+.gemini/
+.agents/
+.antigravitycli/
