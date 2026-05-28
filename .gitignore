@@ -1,6 +1,7 @@
 # Ignore large data files to prevent GitHub push errors and repo bloat
 *.csv
 *.xlsx
+!07_audit_log/AI_Audit_Log.xlsx
 *.pkl
 *.sqlite
 

@@ -158,6 +158,11 @@ def main():
     auuc_score = np.trapezoid(qini) / len(qini)
     random_auuc = np.trapezoid(random_qini) / len(random_qini)
     
+    print(f"\n--- ĐÁNH GIÁ MÔ HÌNH UPLIFT ---")
+    print(f"AUUC (Area Under Uplift Curve): {auuc_score:.4f}")
+    print(f"Random AUUC: {random_auuc:.4f}")
+    print(f"QINI Gain (AUUC - Random AUUC): {auuc_score - random_auuc:.4f}")
+    
     plt.figure(figsize=(10, 6))
     plt.plot(range(len(qini)), qini, label='XGBoost T-Learner Uplift')
     plt.plot(range(len(random_qini)), random_qini, label='Random', linestyle='--')
