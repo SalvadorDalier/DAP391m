@@ -2,21 +2,30 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import roc_curve, auc
 
 # --- 1. THIẾT LẬP & TẢI DỮ LIỆU ---
 # Đường dẫn đến file train/test đã được tạo từ Bước 2
 TRAIN_PATH = r'C:\Users\Lenovo\Desktop\DAP391_project\01_data\train_test\train_data.csv'
 TEST_PATH = r'C:\Users\Lenovo\Desktop\DAP391_project\01_data\train_test\test_data.csv'
+RFM_PATH = r'C:\Users\Lenovo\Desktop\DAP391_project\01_data\processed\customer_rfm.csv'
     
 df_train = pd.read_csv(TRAIN_PATH)
 df_test = pd.read_csv(TEST_PATH)
+df_rfm = pd.read_csv(RFM_PATH)
+
+if 'DiscountValue' not in df_train.columns:
+    df_train = df_train.merge(df_rfm[['CustomerID', 'DiscountValue']], on='CustomerID', how='inner')
+    df_test = df_test.merge(df_rfm[['CustomerID', 'DiscountValue']], on='CustomerID', how='inner')
+
+df_train['Treatment'] = (df_train['DiscountValue'] > 5).astype(int)
+df_test['Treatment'] = (df_test['DiscountValue'] > 5).astype(int)
 
 # Các đặc trưng dùng để huấn luyện
-features = ['Recency', 'Frequency', 'TotalReturns']
-target = 'Monetary'
-treatment = 'Is_Redeemer'
+features = ['Recency', 'Frequency', 'Monetary']
+target = 'Is_Redeemer'
+treatment = 'Treatment'
 
 # --- 2. MÔ HÌNH HÓA UPLIFT (T-LEARNER) ---
 # Tách dữ liệu tập train thành nhóm đối chứng (Control) và nhóm can thiệp (Treatment)
@@ -24,17 +33,17 @@ train_t = df_train[df_train[treatment] == 1]
 train_c = df_train[df_train[treatment] == 0]
     
 # Huấn luyện mô hình cho nhóm Treatment
-model_t = RandomForestRegressor(n_estimators=100, random_state=42)
+model_t = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
 model_t.fit(train_t[features], train_t[target])
 
 # Huấn luyện mô hình cho nhóm Control
-model_c = RandomForestRegressor(n_estimators=100, random_state=42)
+model_c = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
 model_c.fit(train_c[features], train_c[target])
 
 # Dự đoán trên tập Test
 # Uplift Score = Dự đoán khi có coupon - Dự đoán khi không có coupon
-pred_t = model_t.predict(df_test[features])
-pred_c = model_c.predict(df_test[features])
+pred_t = model_t.predict_proba(df_test[features])[:, 1]
+pred_c = model_c.predict_proba(df_test[features])[:, 1]
 df_test['uplift_score'] = pred_t - pred_c
 
 # --- 3. TRỰC QUAN HÓA DỮ LIỆU ---
@@ -70,15 +79,15 @@ df_test = df_test.sort_values(by='uplift_score', ascending=False).reset_index(dr
 
 # Tính toán các chỉ số tích lũy cho QINI
 df_test['cum_n'] = np.arange(1, len(df_test) + 1)
-df_test['cum_treat'] = df_test['Is_Redeemer'].cumsum()
+df_test['cum_treat'] = df_test['Treatment'].cumsum()
 df_test['cum_control'] = df_test['cum_n'] - df_test['cum_treat']
-df_test['cum_y_treat'] = (df_test['Is_Redeemer'] * df_test['Monetary']).cumsum()
-df_test['cum_y_control'] = ((1 - df_test['Is_Redeemer']) * df_test['Monetary']).cumsum()
+df_test['cum_y_treat'] = (df_test['Is_Redeemer'] * df_test['Treatment']).cumsum()
+df_test['cum_y_control'] = (df_test['Is_Redeemer'] * (1 - df_test['Treatment'])).cumsum()
 
-# Công thức Qini chuẩn hóa đơn giản
-n_t = df_test['Is_Redeemer'].sum()
+# Công thức Qini chuẩn hóa đơn giản (dùng tỷ lệ tổng thể để ổn định đường cong)
+n_t = df_test['Treatment'].sum()
 n_c = len(df_test) - n_t
-df_test['qini'] = df_test['cum_y_treat'] - df_test['cum_y_control'] * (df_test['cum_treat'] / df_test['cum_control']).fillna(0)
+df_test['qini'] = df_test['cum_y_treat'] - df_test['cum_y_control'] * (n_t / n_c)
 
 plt.figure(figsize=(8, 6))
 plt.plot(df_test['cum_n'] / len(df_test),
@@ -91,10 +100,10 @@ plt.legend()
 plt.savefig('qini_curve.png', dpi=300)
 plt.close()
 
-# Vẽ đường cong ROC Uplift (sử dụng ngưỡng Monetary trung vị làm mốc phản hồi tích cực)
-threshold_val = df_test['Monetary'].median()
-df_test['is_positive'] = (df_test['Monetary'] > threshold_val).astype(int)
-fpr, tpr, _ = roc_curve(df_test['is_positive'], df_test['uplift_score'])
+# Vẽ đường cong ROC Uplift (sử dụng Transformed Outcome làm nhãn proxy cho Uplift)
+# Nhãn 1: Có can thiệp + Mua HOẶC Không can thiệp + Không mua
+df_test['true_uplift_proxy'] = (df_test['Is_Redeemer'] == df_test['Treatment']).astype(int)
+fpr, tpr, _ = roc_curve(df_test['true_uplift_proxy'], df_test['uplift_score'])
 roc_auc = auc(fpr, tpr)
 
 plt.figure(figsize=(8, 6))

@@ -14,12 +14,14 @@ def calculate_qini_curve(y_true, uplift, treatment):
     df['n_c'] = (~df['t'].astype(bool)).cumsum()
     df['y_t'] = (df['y'] * df['t']).cumsum()
     df['y_c'] = (df['y'] * (~df['t'].astype(bool))).cumsum()
-    df['qini'] = df['y_t'] - df['y_c'] * (df['n_t'] / df['n_c'].replace(0, 1))
     
-    total_y_t = df['y_t'].iloc[-1]
-    total_y_c = df['y_c'].iloc[-1]
     total_n_t = df['n_t'].iloc[-1]
     total_n_c = df['n_c'].iloc[-1]
+    total_y_t = df['y_t'].iloc[-1]
+    total_y_c = df['y_c'].iloc[-1]
+    
+    # Stable Qini formulation using total population ratio
+    df['qini'] = df['y_t'] - df['y_c'] * (total_n_t / total_n_c)
     
     max_qini = total_y_t - total_y_c * (total_n_t / total_n_c)
     df['random_qini'] = np.linspace(0, max_qini, len(df))
@@ -98,8 +100,8 @@ def main():
     # --- 2. XGBoost T-Learner ---
     print("\nĐang huấn luyện Uplift Model (XGBoost T-Learner)...")
     
-    xgb_control = xgb.XGBClassifier(random_state=42, n_estimators=100, max_depth=3, eval_metric='logloss')
-    xgb_treatment = xgb.XGBClassifier(random_state=42, n_estimators=100, max_depth=3, eval_metric='logloss')
+    xgb_control = xgb.XGBClassifier(random_state=42, n_estimators=100, max_depth=2, learning_rate=0.05, subsample=0.8, colsample_bytree=0.8, eval_metric='logloss')
+    xgb_treatment = xgb.XGBClassifier(random_state=42, n_estimators=100, max_depth=2, learning_rate=0.05, subsample=0.8, colsample_bytree=0.8, eval_metric='logloss')
     
     mask_c_train = (t_train == 0)
     mask_t_train = (t_train == 1)
