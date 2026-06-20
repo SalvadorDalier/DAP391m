@@ -1,15 +1,26 @@
-# Ignore large data files to prevent GitHub push errors and repo bloat
+# Data
 *.csv
 *.xlsx
-!07_audit_log/AI_Audit_Log.xlsx
 *.pkl
 *.sqlite
+data/raw/*
+!data/raw/__init__.py
+data/processed/*
+!data/processed/__init__.py
 
-# Ignore Python caches
+# Python
 __pycache__/
 *.pyc
+.pytest_cache/
+.venv/
 
-# Ignore Agent folders
+# IDE/Config
 .gemini/
 .agents/
 .antigravitycli/
+.DS_Store
+
+# Temporary
+draft/
+notebooks/*
+!notebooks/__init__.py
