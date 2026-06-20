@@ -5,10 +5,12 @@
 *.sqlite
 data/raw/
 data/processed/
+data/external/
 
 # Python
 __pycache__/
 *.pyc
+.pytest_cache/
 .venv/
 
 # IDE/Config
