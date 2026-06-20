@@ -3,9 +3,10 @@
 *.xlsx
 *.pkl
 *.sqlite
-data/raw/
-data/processed/
-data/external/
+data/raw/*
+!data/raw/__init__.py
+data/processed/*
+!data/processed/__init__.py
 
 # Python
 __pycache__/
