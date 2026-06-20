@@ -22,4 +22,5 @@ __pycache__/
 
 # Temporary
 draft/
-notebooks/
+notebooks/*
+!notebooks/__init__.py
