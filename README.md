@@ -1,6 +1,5 @@
 # DAP391m - Online Retail II Uplift Modeling
 
-**Repository:** https://github.com/SalvadorDalier/DAP391m
 
 Uplift modeling project using a T-Learner (XGBoost) on the UCI Online Retail II dataset. Predicts customer sensitivity to coupons to maximize marketing ROI by targeting only Persuadable customers.
 
@@ -101,35 +100,3 @@ Three tabs:
 - **What-If Targeting** - adjust coupon cost and margin sliders, see dynamic target list with expected profit
 - **Executive Summary** - compare mass mailing vs AI-targeted ROI
 - **Customer Lookup** - search by Customer ID for CATE, segment, recommendation
-
----
-
-## API (Flask)
-
-```bash
-python src/api/server.py
-```
-
-Endpoints:
-- `GET /api/customer/<id>` - uplift score, segment, CATE, probabilities for a customer
-- `GET /api/top_targets` - top 20% customers by uplift score
-
----
-
-## Tests
-
-```bash
-pytest tests/
-```
-
-87 tests covering all modules (ingest, features, split, train, evaluate, predict, visualization, API, dashboard).
-
----
-
-## Requirements
-
-- Python 3.10+
-- numpy, pandas, scikit-learn, xgboost
-- matplotlib, seaborn
-- flask, streamlit
-- pytest
